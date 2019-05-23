@@ -1,0 +1,278 @@
+setup:
+  - do:
+      indices.create:
+        index: filesystem
+        body:
+          settings:
+            number_of_shards: 1
+            number_of_replicas: 0
+          mappings:
+            properties:
+              path:
+                type: keyword
+              views:
+                type: integer
+
+  - do:
+      cluster.health:
+        wait_for_status: green
+
+---
+"Test with filesystem arborescence":
+  - do:
+      index:
+        index: filesystem
+        id: 1
+        body: { "path": "/My documents/Spreadsheets/Budget_2013.xls", "views": 10 }
+
+  - do:
+      index:
+        index: filesystem
+        id: 2
+        body: { "path": "/My documents/Spreadsheets/Budget_2014.xls", "views": 7 }
+
+  - do:
+      index:
+        index: filesystem
+        id: 3
+        body: { "path": "/My documents/Test.txt", "views": 1 }
+
+  - do:
+      index:
+        index: filesystem
+        id: 4
+        body: { "path": "/My documents/Spreadsheets//Budget_2014.xls", "views": 12 }
+
+  - do:
+      indices.refresh: {}
+
+
+# basic test
+  - do:
+      search:
+        rest_total_hits_as_int: true
+        body: {
+          "size" : 0,
+          "aggs" : {
+            "tree" : {
+              "path_hierarchy" : {
+                "field" : "path",
+                "separator": "/",
+                "order": [ {"_count": "desc"}, {"_key": "asc"}],
+                "min_depth": 0,
+                "max_depth": 3
+              },
+              "aggs": {
+                "total_views": {
+                  "sum": {
+                    "field": "views"
+                  }
+                }
+              }
+            }
+          }
+        }
+
+  - match: { hits.total: 4 }
+
+  - match: { aggregations.tree.buckets.0.key: "My documents" }
+  - match: { aggregations.tree.buckets.0.doc_count: 4 }
+  - match: { aggregations.tree.buckets.0.total_views.value: 30 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.key: "Spreadsheets" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.doc_count: 3 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.total_views.value: 29 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.key: "Test.txt" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.total_views.value: 1 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.key: "Budget_2014.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.doc_count: 2 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.total_views.value: 19 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.1.key: "Budget_2013.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.1.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.1.total_views.value: 10 }
+
+
+# test size
+  - do:
+      search:
+        rest_total_hits_as_int: true
+        body: {
+          "size" : 0,
+          "aggs" : {
+            "tree" : {
+              "path_hierarchy" : {
+                "field" : "path",
+                "size": 2
+              }
+            }
+          }
+        }
+
+  - match: { hits.total: 4 }
+
+  - match: { aggregations.tree.buckets.0.key: "My documents" }
+  - match: { aggregations.tree.buckets.0.doc_count: 4 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.key: "Spreadsheets" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.doc_count: 3 }
+
+
+# test depth
+  - do:
+      search:
+        rest_total_hits_as_int: true
+        body: {
+          "size" : 0,
+          "aggs" : {
+            "tree" : {
+              "path_hierarchy" : {
+                "field" : "path",
+                "separator": "/",
+                "order": [{"_count": "desc"}, {"_key": "asc"}],
+                "depth": 2
+              },
+              "aggs": {
+                "total_views": {
+                  "sum": {
+                    "field": "views"
+                  }
+                }
+              }
+            }
+          }
+        }
+
+  - match: { hits.total: 4 }
+
+  - match: { aggregations.tree.buckets.0.key: "Budget_2014.xls" }
+  - match: { aggregations.tree.buckets.0.doc_count: 2 }
+  - match: { aggregations.tree.buckets.0.total_views.value: 19 }
+
+  - match: { aggregations.tree.buckets.1.key: "Budget_2013.xls" }
+  - match: { aggregations.tree.buckets.1.doc_count: 1 }
+  - match: { aggregations.tree.buckets.1.total_views.value: 10 }
+
+
+# test keep_blank_path
+  - do:
+      search:
+        rest_total_hits_as_int: true
+        body: {
+          "size" : 0,
+          "aggs" : {
+            "tree" : {
+              "path_hierarchy" : {
+                "field" : "path",
+                "separator": "/",
+                "order": [{"_count": "desc"}, {"_key": "asc"}],
+                "keep_blank_path": "true"
+              },
+              "aggs": {
+                "total_views": {
+                  "sum": {
+                    "field": "views"
+                  }
+                }
+              }
+            }
+          }
+        }
+
+  - match: { hits.total: 4 }
+
+  - match: { aggregations.tree.buckets.0.key: "My documents" }
+  - match: { aggregations.tree.buckets.0.doc_count: 4 }
+  - match: { aggregations.tree.buckets.0.total_views.value: 30 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.key: "Spreadsheets" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.doc_count: 3 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.total_views.value: 29 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.key: "Test.txt" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.total_views.value: 1 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.key: "" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.total_views.value: 12 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.1.key: "Budget_2013.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.1.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.1.total_views.value: 10 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.2.key: "Budget_2014.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.2.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.2.total_views.value: 7 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.tree.buckets.0.key: "Budget_2014.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.tree.buckets.0.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.tree.buckets.0.tree.buckets.0.total_views.value: 12 }
+
+# test multi characters separator
+  - do:
+      search:
+        rest_total_hits_as_int: true
+        body: {
+          "size" : 0,
+          "aggs" : {
+            "tree" : {
+              "path_hierarchy" : {
+                "field" : "path",
+                "separator": "doc",
+                "order": [{"_key": "asc"}],
+              },
+              "aggs": {
+                "total_views": {
+                  "sum": {
+                    "field": "views"
+                  }
+                }
+              }
+            }
+          }
+        }
+
+  - match: { hits.total: 4 }
+
+  - match: { aggregations.tree.buckets.0.key: "/My " }
+  - match: { aggregations.tree.buckets.0.doc_count: 4 }
+  - match: { aggregations.tree.buckets.0.total_views.value: 30 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.key: "uments/Spreadsheets//Budget_2014.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.0.total_views.value: 12 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.key: "uments/Spreadsheets/Budget_2013.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.1.total_views.value: 10 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.2.key: "uments/Spreadsheets/Budget_2014.xls" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.2.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.2.total_views.value: 7 }
+
+  - match: { aggregations.tree.buckets.0.tree.buckets.3.key: "uments/Test.txt" }
+  - match: { aggregations.tree.buckets.0.tree.buckets.3.doc_count: 1 }
+  - match: { aggregations.tree.buckets.0.tree.buckets.3.total_views.value: 1 }
+
+## test sum_other_hierarchy_nodes
+#  - do:
+#      search:
+#        body: {
+#          "size" : 0,
+#          "aggs" : {
+#            "tree" : {
+#              "path_hierarchy" : {
+#                "field" : "path",
+#                "size": 1
+#              }
+#            }
+#          }
+#        }
+#
+#  - match: { hits.total: 4 }
+#
+#  - match: { aggregations.tree.sum_other_hierarchy_nodes: 4 }
